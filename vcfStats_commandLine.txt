@@ -1,0 +1,17 @@
+################################################################################
+# get vcf stats on each chromosome
+################################################################################
+VCF_DIR=/mnt/internal.idm.ctr/ActiveDevelopmentProjects/pf3k_v5_data/ngs.sanger.ac.uk/production/pf3k/release_5/5.1
+OUTPUT_DIR=/mnt/internal.idm.ctr/ActiveDevelopmentProjects/pf3k_v5_data/vcf_stats
+ls $VCF_DIR/*.vcf.gz | sed 's/.vcf.gz$//' | sed 's/^.*SNP_INDEL_//' | xargs -i echo 'bcftools stats $VCF_DIR/SNP_INDEL_{}.vcf.gz > $OUTPUT_DIR/stats_{}.txt' | parallel
+
+
+################################################################################
+# subset vcf stats
+################################################################################
+# get the unique categories from one of the files
+VCF_PATTERNS="$(cat stats_Pf3D7_01_v3.combined.filtered.txt | cut -f1 | grep -v "^[#;]" | uniq)"
+# quick nested xargs despite less than stellar coding practice here
+echo "$VCF_PATTERNS" | xargs -i echo 'ls *.txt | xargs grep -w "^{}" > vcfSubset_{}.txt' | sh
+# get the headers per category for R renaming easy
+cat stats_Pf3D7_01_v3.combined.filtered.txt | grep "^# $VCF_PATTERNS" | grep "[2]" > bcftools_headers.txt
