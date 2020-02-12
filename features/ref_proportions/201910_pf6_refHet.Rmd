@@ -1,0 +1,186 @@
+---
+title: "Heterozygosity of variants in Pfv6"
+output: html_notebook
+---
+
+
+```{r setup, include=FALSE}
+################################################################################
+for(p in c('data.table', 'dplyr', 
+           'ggplot2', "viridis", "RColorBrewer")){
+  if(!p %in% installed.packages()[,1]){
+    install.packages(p)
+    library(p, character.only = TRUE)
+  }
+  library(p, character.only = TRUE)
+}
+
+################################################################################
+theme_j <- function () {
+  theme_bw(base_size=16) %+replace%
+    theme(
+      # font sizes and color
+      panel.background  = element_blank(),
+      plot.background   = element_rect(fill="transparent", colour=NA),
+      plot.title        = element_text(size = rel(.85)),
+      strip.background  = element_rect(fill="transparent", colour=NA),
+      strip.text        = element_text(face="bold", size=rel(1)),
+      axis.title        = element_text(size=rel(0.8)),
+      axis.text         = element_text(size=rel(0.6), color="grey30"),
+      # legend
+      legend.title         = element_text(size=rel(0.8)),
+      legend.text          = element_text(size=rel(0.6)),
+      legend.background    = element_rect(fill="transparent", colour=NA),
+      legend.key           = element_rect(fill="transparent", colour=NA),
+      legend.justification = "top"
+    )
+}
+
+theme_set(theme_j())
+```
+
+
+## Introduction
+
+The MalariaGEN Plamodium falciparum Community project recently released version 6 of sequencing data (Oct 10, 2019). This data release contains 7,113 genomes from 73 study sites. Samples from the Pf3k project for which sequence alignments have been downloaded are included. Updates include upgraded variant discovery and genotype calling pipeline. For more details on the dta release and available content, please reference the project website: https://www.malariagen.net/resource/26.
+
+Variant data have been provided in VCF and Zarr formats. I have use Python packages to subset the variants of interest and determine the percentage of reads that map to the reference allele. Details can be found in the Python notebook [name].  
+
+## Goals
+
+The goal of this analysis is to replicate earlier work by Josh Protoctor on the Pf3k v3 release on the heterozygosity at variant sites. A higher proportion of heterozygozity scores across the genome within a sample is indicative of polyinfections.
+
+
+```{r load_data}
+pf6_dir <- "/home/jribado/Dropbox (IDM)/Data, Dynamics, and Analytics Folder/Projects/malaria_pfcommunity/malaria_pfv6"
+pf6_meta <- fread(paste(pf6_dir, "Pf_6_MalariaGenMaterials/Pf_6_samples.txt", sep="/"))
+names(pf6_meta) <- gsub(" ", "_", tolower(names(pf6_meta)))
+pf6_meta <- dplyr::filter(pf6_meta, population != "Lab") %>% 
+  dplyr::mutate(population = factor(population, 
+                                    levels = c("WAF", "EAF", "CAF", "WSEA", "ESEA", "SAS", "SAM", "OCE")))
+base_all <- fread(paste(pf6_dir, "biAllelicPassSeg_baseCounts.txt", sep="/"), header = T)
+ref_het  <- fread(paste(pf6_dir, "biAllelicPassSeg_hetCounts.txt", sep="/"), header = T) 
+```
+The dataframe still contains 71,265 variants even after filtering for SNPs in the core genome with a VSLOD score > 6 that are segregating in at least one population. 
+
+Remove all SNPs that are homozygous reference or alternative across all samples. To be extra conservative, remove variants with less than 10 reads in 98% of samples.  
+
+```{r filter}
+# remove variants where all samples have the reference allele or alternative allele
+hom_index  <- !(rowSums(ref_het[,-1]) %in% c(0,5970))
+base_homRm <- base_all[hom_index]
+
+require("genefilter")
+flist      <- filterfun(kOverA((ncol(base_homRm)-1)*0.98, 10))
+index_keep <- genefilter(base_homRm[,-1], flist)
+table(index_keep)
+```
+
+This helped get us to ~11K SNPs which is more manageable than 70K for visualization.  
+Other ideas to prune these SNPs is to either collapse the median read counts across genomic windows, filter by allele frequency, pick the top sites with the highest standard deviation across samples, or pick sites with the least homozygous (ref or alt) alleles across samples.
+
+Usually MAF is provided in VCF files, but not for Pfv6 files. MAF across all samples was generated with bcftools for each variant, which I can use to filter samples. 
+
+
+```{r het_dist}
+ref_het.no0 <- ref_het[hom_index,]
+ref_het.no1 <- ref_het.no0[index_keep,]
+
+
+het_summ <- cbind.data.frame(
+  pos    = ref_het.no1$V1,
+  median = matrixStats::rowMedians(as.matrix(ref_het.no1[,-1])),
+  sd     = matrixStats::rowSds(as.matrix(ref_het.no1[,-1])),
+  stringsAsFactors=F)
+het_summ_top <- dplyr::arrange(het_summ, desc(sd), desc(median)) %>% head()
+```
+
+```{r}
+nZero <- rowSums(ref_het.no1[,-1] == 0, na.rm=T)
+nOne  <- rowSums(ref_het.no1[,-1] == 1, na.rm=T)
+het_counts <- cbind.data.frame(pos=ref_het.no1$V1, nZero, nOne, 
+                               hom_sites = nZero + nOne, stringsAsFactors=F) %>%
+  dplyr::arrange(hom_sites)
+het_count_top <- het_counts %>% head(500)   
+```
+
+I chose to plot the top 1000 variants with the most heterozygous counts across samples. The variants will be clustered across all samples by Euclidean distance for better visual clarity than genomic order.
+
+```{r var_clust}
+het_sub <- dplyr::filter(ref_het.no1, V1 %in% het_count_top$pos)
+het_matrix <- dplyr::select(het_sub, -V1) %>% as.matrix()
+rownames(het_matrix) <- het_sub$V1
+
+d   <- dist(het_matrix, method = "euclidean") 
+fit <- hclust(d, method="ward.D")
+het_varOrd <- het_matrix[fit$order,]
+```
+
+This graph would be too large with all of the samples included - individual graphs will be created for each population as defined by Pfv6. Samples should be clustered within population to organize by heterozygozity similarity. 
+
+```{r samp_clust}
+# function to cluster 
+sample_clust <- function(metadata, subset_pop){
+   samp_list <- dplyr::filter(metadata, population == subset_pop) %>% .[["sample"]]
+   sub_mat   <- het_varOrd[, colnames(het_varOrd) %in% samp_list]
+   sub_mat_t <- sub_mat %>% t()
+   d         <- dist(sub_mat_t, method = "euclidean") 
+   fit       <- hclust(d, method="ward.D")
+   samp_ord  <- fit$labels[fit$order]
+}
+```
+
+```{r pop_plotting}
+# function to cluster 
+sample_clust <- function(metadata, subset_pop){
+   samp_list <- dplyr::filter(metadata, population == subset_pop) %>% .[["sample"]]
+   sub_mat   <- het_varOrd[, colnames(het_varOrd) %in% samp_list]
+   sub_mat_t <- sub_mat %>% t()
+   d         <- dist(sub_mat_t, method = "euclidean") 
+   fit       <- hclust(d, method="ward.D")
+   samp_ord  <- fit$labels[fit$order]
+}
+```
+
+
+```{r counts_to_long}
+ref_top_long <- het_varOrd %>% data.frame() %>% 
+  tibble::rownames_to_column("pos") %>%
+  tidyr::gather(sample, ref_perc, -pos) %>%
+  dplyr::mutate(sample = gsub("\\.", "\\-", sample),
+                pos = factor(pos, levels=rownames(het_varOrd))) %>%
+  dplyr::inner_join(., pf6_meta)
+```
+
+```{r samp_plot}
+populations <- pf6_meta$population %>% unique
+
+pop_plots <- lapply(setNames(populations, populations), function(j){
+  print(j)
+ samp_ord <- sample_clust(pf6_meta, j)
+ plot <- ref_top_long %>% 
+  dplyr::filter(population == j) %>%
+  dplyr::mutate(sample = factor(sample, levels = samp_ord)) %>% 
+  ggplot(aes(x=sample, y=pos, color=ref_perc)) +
+  geom_tile() +
+  theme(axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank()) +
+   ggtitle(paste0(j, "\n(N = ", length(samp_ord), ")")) +
+  scale_color_gradientn(colors=pals::brewer.spectral(50), name="Percent refernce allele") 
+})
+```
+```{r combined_plots}
+figure <- ggpubr::ggarrange(pop_plots[[1]], pop_plots[[2]], pop_plots[[8]], 
+                            pop_plots[[3]],pop_plots[[4]], pop_plots[[7]],
+                            pop_plots[[5]],pop_plots[[6]],
+                    nrow = 1, common.legend=T, widths = c(.43,.15,.12,.2, .25,.075,.1,.075))
+ggsave("pfv6_refHet.png", plot=figure, path="/home/jribado/Dropbox (IDM)/Data, Dynamics, and Analytics Folder/Projects/malaria_pfcommunity/malaria_pfv6/plots", width=15, height=5, units = c("in"), dpi = 300)
+
+```
+
+
+

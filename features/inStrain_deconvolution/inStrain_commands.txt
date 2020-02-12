@@ -1,0 +1,19 @@
+# put each chromosome sequence on one line to avoid any errors
+awk '/^>/ {printf("\n%s\n",$0);next; } { printf("%s",$0);}  END {printf("\n");}' < Pfalciparum.genome.fasta > Pfalciparum.genome.v2.fasta
+# additionally converted all sequences to uppercase in Atom.
+
+# run inStrain
+BAM_DIR='/mnt/md0/malariaGen_genomic/pf3k_v5/BAM'
+PF_FASTA='/mnt/md0/malariaGen_genomic/pf3k_v5/Pfalciparum_edit.genome.fasta'
+OUT_DIR='/mnt/md0/malariaGen_genomic/pf3k_v5/inStrain'
+ls -d $BAM_DIR/*.bam | grep "Sen" | sed 's/.*BAM\///' | sed 's/\.bam//' | parallel -j 100 inStrain profile $BAM_DIR/{}.bam $PF_FASTA -o $OUT_DIR/{}
+
+
+# since each senegal strain returned as having no haplotype diversity, perhaps check this with a synthetic mixture (just merging two files together)
+PF_DIR="/mnt/md0/malariaGen_genomic/pf3k_v5"
+PF_FASTA='/mnt/md0/malariaGen_genomic/pf3k_v5/Pfalciparum_edit.genome.fasta'
+OUT_DIR='/mnt/md0/malariaGen_genomic/pf3k_v5/inStrain'
+samtools merge $PF_DIR/inStrain/synthetic_2strains.bam $PF_DIR/BAM/SenV092-05.bam $PF_DIR/BAM/SenT236-08.bam
+inStrain profile $PF_DIR/inStrain/synthetic_2strains.bam $PF_FASTA -o $OUT_DIR/synthetic_2strains
+
+

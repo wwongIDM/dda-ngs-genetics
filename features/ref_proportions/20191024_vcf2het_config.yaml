@@ -1,0 +1,4 @@
+alt_allele_max: 1
+vsqlod_min: 6
+
+min_site_reads: 10
