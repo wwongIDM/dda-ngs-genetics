@@ -1,0 +1,114 @@
+---
+title: "Mozambique amplicons - distribution of microhaplotypes"
+output: html_notebook
+---
+
+```{r setup}
+# load libraries
+for(p in c('data.table', 'dplyr', 'tidyr', 
+           "ggplot2", "ggpubr", "gridExtra")){
+  if(!p %in% installed.packages()[,1]){
+    install.packages(p)
+    library(p, character.only = TRUE)
+  }
+  library(p, character.only = TRUE)
+}
+
+# set global options
+options(datatable.fread.datatable=FALSE)
+options(stringsAsFactors = FALSE)
+
+# set directories
+project_dir <- '/home/jribado/Dropbox (IDM)/Data, Dynamics, and Analytics Folder/Projects/malaria_Mozambique/amplicons_processed' 
+
+# set plotting theme
+theme_j <- function () {
+  theme_bw(base_size=16) %+replace%
+    theme(
+      # font sizes and color
+      panel.background  = element_blank(),
+      plot.background   = element_rect(fill="transparent", colour=NA),
+      plot.title        = element_text(size = rel(.85)),
+      strip.background  = element_rect(fill="transparent", colour=NA),
+      strip.text        = element_text(face="bold", size=rel(.6)),
+      axis.title        = element_text(size=rel(0.8)),
+      axis.text         = element_text(size=rel(0.6), color="grey30"),
+      # legend
+      legend.title         = element_text(size=rel(0.8)),
+      legend.text          = element_text(size=rel(0.6)),
+      legend.background    = element_rect(fill="transparent", colour=NA),
+      legend.key           = element_rect(fill="transparent", colour=NA),
+      legend.justification = "top"
+    )
+}
+
+theme_set(theme_j())
+```
+
+```{r load data}
+amp_windows <- read.delim(paste(project_dir, "paragon_targets.bed", sep='/'), header=F)
+names(amp_windows) <- c("genome_chrom", "start", "end", "site") 
+moz_samp <- read.delim(paste(project_dir, "sampleMeta_062012019.csv", sep='/'), sep=",")
+moz_amps <- data.table::fread(paste(project_dir, "allInfo_results_23072019.tab.gz", sep="/")) 
+```
+
+## Haplotype distribution throughout the genome
+
+```{r genome_dist}
+# get the size of each chromosome
+chrom_size <- read.delim('/mnt/md0/malariaGen_genomic/reference_genome/Plasmodium_3D7_v5.5_chrom.sizes.txt', header=F) %>%
+  dplyr::mutate(V1 = sprintf("%02d", as.numeric(gsub("MAL", "", V1))))
+names(chrom_size) <- c("chromosome", "size")
+
+# plot chromosome with the amplicon locations
+amp_markers <- dplyr::mutate(amp_windows, chromosome = gsub("Pf3D7_|_v3", "", genome_chrom)) 
+chr_plot <- ggplot() + 
+    # base rectangles for the chroms, with numeric value for each chrom on the x-axis
+    geom_rect(data = chrom_size,
+              aes(ymin = as.numeric(chromosome) - 0.2, ymax = as.numeric(chromosome) + 0.2, 
+                  xmax = size, xmin = 0), colour="black", fill = rep(c("grey85", "grey95"), 7)) +
+    geom_rect(data = amp_markers,  
+              aes(ymin = as.numeric(chromosome) - 0.2, ymax = as.numeric(chromosome) + 0.2, 
+                  xmax = end+2000, xmin = start), fill = get_palette("RdBu", 6)[1], alpha=0.75) +
+   scale_y_continuous(labels = sprintf("%02d", seq(1,14)), breaks = seq(1,14)) +
+   scale_x_continuous(position="top") +
+   labs(y="Chromosome", x="Base position (Mb)") +
+   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())  
+  #annotation_custom(tableGrob(table, rows=NULL), ymin=2.5e6, ymax=3.5e6, xmin=1, xmax=11)
+   
+# create table with counts
+table <- amp_markers %>% dplyr::count(chromosome) %>% dplyr::arrange(desc(chromosome)) 
+table_styled <- ggtexttable(table, rows = NULL, cols=c("Chr", "Amplicons"), 
+  theme = ttheme(colnames.style = colnames_style(color = "black", fill = c("white", get_palette("RdBu", 6)[1]))))
+
+# plot together
+amp_pos_merged <- ggarrange(table_styled, chr_plot, widths = c(0.5, 1.5),ncol = 2, nrow = 1, align = "h") 
+ggsave("heterozyome_positions.png", plot = amp_pos_merged, path = paste(project_dir, "plots", sep="/"), width = 10, height = 4.5, units = c("in"), dpi = 300)  
+```
+
+
+```{r microhaps_per_site}
+micro_counts <- tidyr::separate(moz_amps,  h_popUID, c("site", "haplotype")) %>%
+  dplyr::group_by(s_Sample, site) %>%
+  dplyr::summarise(microhaplotype = n())
+micro_counts %>% ggplot(aes(x=site, y=microhaplotype)) +
+  geom_boxplot()
+```
+
+## Clustering
+
+```{r haplotype_matrix}
+prop_df <- dplyr::select(moz_amps, s_Sample, h_popUID, c_ReadFrac) %>%
+  tidyr::spread(h_popUID, c_ReadFrac) %>%
+  replace(is.na(.), 0) 
+prop_mat <- as.matrix(prop_df[,-1])
+rownames(prop_mat) <- prop_df$s_Sample
+```
+
+```{r haplotype_cluster}
+sampPCA <- prcomp(prop_mat, scale. = F, center = F)
+data.frame(sampPCA$x) %>% tibble::rownames_to_column("sampleName") %>%
+  inner_join(., moz_samp) %>%
+  ggplot(aes(x=PC1, y=PC2, color=sampleGroup)) + geom_point() + theme_bw()
+```
+
