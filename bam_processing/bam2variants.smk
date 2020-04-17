@@ -1,11 +1,3 @@
-
-################################################################################
-# import packages
-from snakemake.utils import validate
-from snakemake.utils import min_version
-import zarr
-import allel
-
 ################################################################################
 # import scripts
 configfile: "config.yaml"
