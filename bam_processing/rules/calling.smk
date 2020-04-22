@@ -1,58 +1,54 @@
-
+###############################################################################
 rule call_variants:
     input:
         bam= join(BAM_DIR, "{sample}_recal.bam")
         ref=config["ref"]["genome"],
-        known=config["ref"]["known-variants"],
-        regions="called/{contig}.regions.bed" if config["processing"].get("restrict-regions") else []
+        # known=config["ref"]["known-variants"],
     output:
         gvcf=protected("called/{sample}.g.vcf.gz")
     log:
         "logs/gatk/haplotypecaller/{sample}.log"
-    params:
-        extra=get_call_variants_params
-    wrapper:
-        "0.27.1/bio/gatk/haplotypecaller"
+    shell: """
+        gatk HaplotypeCaller \
+            --reference {input.ref} \
+            --input {input.bam} \
+            --output {output} \
+            -ERC GVCF
+    """
 
-
+###############################################################################
 rule combine_calls:
     input:
         ref=config["ref"]["genome"],
-        gvcfs=expand("called/{sample}.g.vcf.gz", sample=BAM_PREFIX)
+        gvcfs=expand("--variant called/{sample}.g.vcf.gz", sample=BAM_PREFIX)
     output:
         gvcf="called/all.g.vcf.gz"
     log:
         "logs/gatk/combinegvcfs.log"
-    wrapper:
-        "0.27.1/bio/gatk/combinegvcfs"
+     shell: """
+        gatk CombineGVCFs \
+            --reference {REF_FILE} \
+            {params.gvcf_string} \
+            --output {output} \
+    """
 
-
+###############################################################################
 rule genotype_variants:
     input:
         ref=config["ref"]["genome"],
         gvcf="called/all.g.vcf.gz"
     output:
         vcf=temp("genotyped/all.vcf.gz")
-    params:
-        extra=config["params"]["gatk"]["GenotypeGVCFs"]
     log:
         "logs/gatk/genotypegvcfs.log"
-    wrapper:
-        "0.27.1/bio/gatk/genotypegvcfs"
+    shell: """
+		gatk GenotypeGVCFs \
+            --reference {input.ref} \
+            --variant {input.gvcf} \
+            --output {output} \
+    """
 
-
-rule merge_variants:
-    input:
-        ref=config["ref"]["genome"] + ".fai"
-        vcfs=rules.genotype_variants.output.vcf
-    output:
-        vcf="genotyped/all.vcf.gz"
-    log:
-        "logs/picard/merge-genotyped.log"
-    wrapper:
-        "0.40.2/bio/picard/mergevcfs"
-
-
+###############################################################################
 rule variants2zarr:
     input:
         vcf=rules.merge_variants.output.vcf
