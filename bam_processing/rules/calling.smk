@@ -16,6 +16,7 @@ rule call_variants:
     """
 
 ###############################################################################
+RUN_DIR = os.getcwd()
 rule combine_calls:
     input:
         ref=config["ref"]["genome"],
@@ -52,9 +53,9 @@ rule genotype_variants:
 ###############################################################################
 rule variants2zarr:
     input:
-        vcf=rules.merge_variants.output.vcf
+        vcf=rules.genotype_variants.output.vcf
     output:
-        vcf="genotyped/all.zarr"
+        vcf="genotyped/all_merged.zarr"
     log:
         "logs/zarr/merged-zarr.log"
     script:
