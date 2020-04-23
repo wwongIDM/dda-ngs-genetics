@@ -1,9 +1,8 @@
 ###############################################################################
 rule call_variants:
     input:
-        bam= join(BAM_DIR, "{sample}_recal.bam")
+        bam= join(config['bam_dir'], "{sample}_recal.bam"),
         ref=config["ref"]["genome"],
-        # known=config["ref"]["known-variants"],
     output:
         gvcf=protected("called/{sample}.g.vcf.gz")
     log:
@@ -20,14 +19,16 @@ rule call_variants:
 rule combine_calls:
     input:
         ref=config["ref"]["genome"],
-        gvcfs=expand("--variant called/{sample}.g.vcf.gz", sample=BAM_PREFIX)
+        gvcfs=expand("called/{sample}.g.vcf.gz", sample=BAM_PREFIX)
     output:
         gvcf="called/all.g.vcf.gz"
+    params:
+        gvcf_string = expand("--variant " + join(RUN_DIR, "called/{sample}.g.vcf.gz"), sample=BAM_PREFIX)
     log:
         "logs/gatk/combinegvcfs.log"
-     shell: """
+    shell: """
         gatk CombineGVCFs \
-            --reference {REF_FILE} \
+            --reference {input.ref} \
             {params.gvcf_string} \
             --output {output} \
     """
@@ -36,7 +37,7 @@ rule combine_calls:
 rule genotype_variants:
     input:
         ref=config["ref"]["genome"],
-        gvcf="called/all.g.vcf.gz"
+        gvcf=rules.combine_calls.output
     output:
         vcf=temp("genotyped/all.vcf.gz")
     log:
