@@ -1,0 +1,8 @@
+# directories for bam files
+bam_dir: '/mnt/md0/malaria/pf3k_v5/BAM/'
+bam_files: '/mnt/md0/malaria/pf3k_v5/BAM/senegal_bams.txt'
+
+bam_calls:
+  reference_genome: '/mnt/md0/malaria/reference_genome/Pfalciparum.genome.fasta'
+  interval_bed: '/mnt/md0/malaria/pf3k_v5/wgs_pull/2008Daniels_BarcodePositions.bed'
+  min_read_qual: 20
