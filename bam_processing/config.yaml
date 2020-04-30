@@ -1,15 +1,8 @@
 bam_dir: /mnt/data/moz_wgs
 
 ref:
-  name: Pfalciparum.genome
-  # Path to the reference genome, ideally as it is provided by the GATK bundle.
   genome: /mnt/data/reference_genome/Pfalciparum.genome.fasta
-  # Path to any database of known variants, ideally as it is provided by the GATK bundle.
-  known-variants: ""
 
 params:
-  gatk:
-    HaplotypeCaller: ""
-    BaseRecalibrator: ""
+    HaplotypeCaller: "-L /mnt/data/known_variants/paragon_targets.bed"
     GenotypeGVCFs: ""
-    VariantRecalibrator: ""

@@ -2,9 +2,11 @@
 rule call_variants:
     input:
         bam= join(config['bam_dir'], "{sample}_recal.bam"),
-        ref=config["ref"]["genome"],
+        ref=config["ref"]["genome"]
     output:
         gvcf=protected("called/{sample}.g.vcf.gz")
+    params:
+        intervals=config['params']['HaplotypeCaller']
     log:
         "logs/gatk/haplotypecaller/{sample}.log"
     shell: """
@@ -12,7 +14,8 @@ rule call_variants:
             --reference {input.ref} \
             --input {input.bam} \
             --output {output} \
-            -ERC GVCF
+            -ERC GVCF \
+            {params.intervals}
     """
 
 ###############################################################################
