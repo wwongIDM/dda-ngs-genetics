@@ -1,0 +1,173 @@
+---
+title: "Senegal Pf3k Sequencing Technology comparison"
+output: html_notebook
+---
+
+```{r setup}
+# load libraries
+for(p in c('data.table', 'dplyr', 'tidyr', "ggplot2", "wesanderson")){
+  if(!p %in% installed.packages()[,1]){
+    install.packages(p)
+    library(p, character.only = TRUE)
+  }
+  library(p, character.only = TRUE)
+}
+
+# set global options
+options(datatable.fread.datatable=FALSE)
+options(stringsAsFactors = FALSE)
+
+# set directories
+project_dir   <- "/home/jribado/Dropbox (IDM)/Data, Dynamics, and Analytics Folder/Projects/malaria_pfcommunity/senegal_barcodeWGS_comp"
+bamCounts_dir <- "/mnt/md0/malaria/pf3k_v5/wgs_pull/bam_counts"
+
+# function to spit out different positions
+string_diff <- function(a, b){
+  if(nchar(a)!=nchar(b)) stop("Lengths of input strings differ. Please check your input.")
+  seq.a <- unlist(strsplit(a,split=""))
+  seq.b <- unlist(strsplit(b,split=""))
+  diff.d <- rbind(seq.a,seq.b)
+  only.diff <-diff.d[,diff.d[1,]!=diff.d[2,]]
+  pos <- which(diff.d[1,]!=diff.d[2,])
+  return(cbind(barcode.x=a, barcode.y=b, diff_pos=toString(pos)))
+}
+```
+
+## Goal
+
+Compare the genotypes and allele frequencies of overlapping barcode and WGS samples from Pf3k. Genotypes were extracted maipulating scikit-allel zarr object functions [Link to git in the future]. This is comparing the 23 or the 24 barcode positions overlapping between data sets.
+
+Need to edit some of the files before proceeding. 
+
+```{r load data}
+# load data 
+barcode_pos <- read.delim('/home/jribado/Dropbox (IDM)/parasite_genetics/genomics/senegal/2008Daniels_BarcodePositions_Updated.txt')
+barcode_vector <- paste(barcode_pos$chr, barcode_pos$position, sep=":")
+
+barcode_gt  <- read.delim('/home/jribado/Dropbox (IDM)/Data, Dynamics, and Analytics Folder/Projects/malaria_barcode/python_barcode_package/data/Senegal_AllBarcodes_2019.04.01.csv', sep=",")[,1:28]
+names(barcode_gt) <- c("sample", "year", barcode_vector, "X", "N")
+
+wgs_zarr_gt  <- read.delim('/home/jribado/Dropbox (IDM)/parasite_genetics/genomics/senegal/Pf3k_wgsSenegalHaploidGenotype24bc.txt', sep=",") 
+```
+
+```{r edit_data}
+wgs_gt <- data.frame(t(wgs_zarr_gt[,-1])) %>%
+  tibble::rownames_to_column("sample") %>%
+  dplyr::mutate(sample = gsub("SenT", "SEN_TH_", sample),
+                sample = gsub("\\.", ".20", sample)) 
+names(wgs_gt) <- c("sample", wgs_zarr_gt$X)
+wgs_gt <- tidyr::unite(wgs_gt, barcode, barcode_vector[1]:barcode_vector[24], sep="", remove=F)
+# identify the missing position in wgs data
+missing_position <- names(wgs_gt)[! barcode_vector %in% names(wgs_gt)]
+```
+
+```{r rm_missing}
+barcode_gt <- barcode_gt[, !names(barcode_gt) %in% missing_position]
+barcode_gt <- tidyr::unite(barcode_gt, barcode, barcode_vector[1]:barcode_vector[24], sep="", remove=F)
+```
+
+```{r merge_overlaps}
+overlap_gt <- dplyr::inner_join(dplyr::select(wgs_gt, sample, barcode), dplyr::select(barcode_gt, sample, barcode), by=c("sample"))
+pairwise_diff <- do.call("rbind", lapply(seq(1, nrow(overlap_gt)), function(i){
+  string_diff(overlap_gt$barcode.x[i], overlap_gt$barcode.y[i])
+}))
+overlap_diff <- dplyr::full_join(overlap_gt, data.frame(pairwise_diff)) %>%
+  dplyr::mutate(wgs_x =  stringr::str_count(barcode.x, "X"),
+                wgs_n =  stringr::str_count(barcode.x, "N"),
+                taq_x =  stringr::str_count(barcode.y, "X"),
+                taq_n =  stringr::str_count(barcode.y, "N"),
+                pos_counts = ifelse(diff_pos == "",  0, stringr::str_count(diff_pos, "\\,") + 1))
+```
+```{r diff_dist}
+gt_diff_dist <- ggplot(overlap_diff, aes(x=pos_counts)) + 
+  geom_histogram() +
+  labs(x="Mismatching positions (max n = 23)", y="Samples (n=109)")
+ggsave("202005_pf3kVCFgt_mismatchHist.png", plot = gt_diff_dist, path = paste(project_dir, "plots", sep="/"), width = 5, height = 3, units = c("in"), dpi = 300)
+```
+
+```{r n_plots}
+overlap_diff_long <- tidyr::pivot_longer(overlap_diff, wgs_x:taq_n, names_to = c("tech"), values_to = c("sample_count")) %>%
+  tidyr::separate(tech, c("technology", "variant"))
+
+counts_line <- overlap_diff_long %>% ggplot(aes(x=technology, y=sample_count, group=sample)) +
+  geom_point() + geom_line(alpha=0.25) +
+  facet_grid(~variant, labeller =  as_labeller(setNames(c("Polygenomic", "Missing"), c("n", "x")))) +
+  labs(x="Sequencing technology", y="Variants (max n = 23)")
+counts_line
+ggsave("202005_pf3kVCFgt_varCoounts.png", plot = counts_line, path = paste(project_dir, "plots", sep="/"), width = 5, height = 3, units = c("in"), dpi = 300)
+```
+
+### Direct counts
+
+These are the counts from the file directly, so keep in mind biases from potential indels near these positions.
+
+```{r}
+bam_count_files <- list.files(bamCounts_dir, pattern="SenT")
+bam_List <- lapply(bam_count_files, function(i){
+  counts <- read.delim(paste(bamCounts_dir, i, sep="/"), header=F)[-5] %>% dplyr::filter(grepl("Pf3D7", V1))
+  names(counts) <- c("chr", "position", "ref", "depth", "A", "C", "G", "T", "N")
+  # subset the read counts per 
+  counts <- cbind(counts[,1:4],
+      A = as.numeric(sapply(strsplit(counts$A, "\\:"), '[', 2)),
+      C = as.numeric(sapply(strsplit(counts$C, "\\:"), '[', 2)),
+      G = as.numeric(sapply(strsplit(counts$G, "\\:"), '[', 2)),
+      T = as.numeric(sapply(strsplit(counts$T, "\\:"), '[', 2)),
+      N = as.numeric(sapply(strsplit(counts$N, "\\:"), '[', 2)), stringsAsFactors=FALSE)
+  counts <- dplyr::left_join(barcode_pos, counts)
+  counts$sample <- gsub("\\_counts.txt", "", gsub("\\-", ".20", gsub("SenT", "SEN_TH_", i)))
+  counts$max <- apply(counts[,5:9], 1, max)
+  counts$gt  <- colnames(counts[5:9])[max.col(counts[,5:9])]
+  counts <- dplyr::mutate(counts, gt = ifelse(depth < 10, "X", ifelse(as.numeric(max)/ depth < 0.80, "N", gt)),
+                          gt = ifelse(is.na(gt), "X", gt)) %>%
+    tidyr::unite(pos, chr:position, sep=":")
+  return(counts)
+})
+bam_df <- do.call("rbind", bam_List) 
+```
+
+```{r depth}
+depths <- dplyr::mutate(bam_df, depth = ifelse(is.na(depth), 0, depth)) %>%
+  ggplot(aes(x=pos, y=depth)) +
+  geom_boxplot() +
+  theme(axis.text = element_text(angle = 90)) +
+  labs(x="Barcode position", y="Sequencing depth")
+# ggsave("202005_pf3kSenegal_bamDepths.png", plot = depths, path = paste(project_dir, "plots", sep="/"), width = 5, height = 3, units = c("in"), dpi = 300)          
+```
+
+```{r bam_barcodes}
+taq_barcodes <- tidyr::unite(barcode_gt, taq_barcode, barcode_vector[1]:barcode_vector[24], sep="")
+bam_barcodes <- tidyr::pivot_wider(bam_df, id_cols = sample, names_from = pos, values_from = gt) %>% 
+  tidyr::unite(bam_barcode, barcode_vector[1]:barcode_vector[24], sep="")
+merged_barcodes <- dplyr::inner_join(bam_barcodes, taq_barcodes)
+```
+```{r}
+bam_gt_diff <- do.call("rbind", lapply(seq(1, nrow(merged_barcodes)), function(i){
+  string_diff(merged_barcodes$taq_barcode[i], merged_barcodes$bam_barcode[i])
+}))
+bam_gt_diff <- cbind(merged_barcodes, bam_gt_diff) %>%
+    dplyr::mutate(bam_n = stringr::str_count(bam_barcode, "N"),
+                  bam_x = stringr::str_count(bam_barcode, "X"),
+                  taq_n = stringr::str_count(taq_barcode, "N"),
+                  taq_x = stringr::str_count(taq_barcode, "X"),
+                  pos_counts = ifelse(diff_pos == "",  0, stringr::str_count(diff_pos, "\\,") + 1))
+```
+
+```{r diff_dist}
+gt_diff_dist <- ggplot(bam_gt_diff, aes(x=pos_counts)) + 
+  geom_histogram() +
+  labs(x="Mismatching positions (max n = 24)", y="Samples (n=109)")
+ggsave("202005_pf3kBAMgt0.8_mismatchDist.png", plot = gt_diff_dist, path = paste(project_dir, "plots", sep="/"), width = 5, height = 3, units = c("in"), dpi = 300)
+```
+
+```{r}
+overlap_diff_long <- tidyr::pivot_longer(bam_gt_diff, bam_n:taq_x, names_to = c("tech"), values_to = c("sample_count")) %>%
+  tidyr::separate(tech, c("technology", "variant"))
+
+counts_line <- dplyr::mutate(overlap_diff_long, technology = factor(technology, levels=c("taq", "bam"))) %>% 
+  ggplot(aes(x=technology, y=sample_count, group=sample)) +
+  geom_point() + geom_line(alpha=0.25) +
+  facet_grid(~variant, labeller =  as_labeller(setNames(c("Polygenomic", "Missing"), c("n", "x")))) +
+  labs(x="Sequencing technology", y="Variants (max n = 24)")
+counts_line
+ggsave("202005_pf3kBAMgt0.6_varCoounts.png", plot = counts_line, path = paste(project_dir, "plots", sep="/"), width = 5, height = 3, units = c("in"), dpi = 300)
+```

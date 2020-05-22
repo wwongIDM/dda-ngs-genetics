@@ -1,0 +1,15 @@
+ bcftools mpileup --fasta-ref /mnt/md0/malaria/reference_genome/Pfalciparum.genome.fasta -b senegal_bams.txt -R ../2008Daniels_BarcodePositionsSing.bed | bcftools call -m > ../senegal_bcftoolVCF.vcf
+
+ gatk VariantsToTable \
+ -V senegal_bcftoolVCF.vcf \
+ -F CHROM -F POS -GF GT \
+ -O senegal_vcfTable.txt
+
+ ---
+
+ bcftools mpileup --threads 7 --fasta-ref /mnt/data/reference_genome/Pfalciparum.genome.fasta -b 202004_mozBams_path.txt -R ../known_variants/paragon_targets.bed | bcftools call -m > bcftools_mpileup/202004_moz_bcftools.vcf
+
+ gatk VariantsToTable \
+ -V 202004_moz_bcftools.vcf \
+ -F CHROM -F POS -GF GT \
+ -O senegal_vcfTable.txt

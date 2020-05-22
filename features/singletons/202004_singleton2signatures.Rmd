@@ -1,0 +1,27 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r load_data}
+sing_dir <- "/mnt/md0/malaria/pf3k_v5/singleton_positions" 
+sing_files <- list.files(sing_dir)
+
+sing_df <- do.call(rbind, lapply(sing_files, function(x){
+  sing_tmp <- read.delim(paste(sing_dir, x, sep="/")) %>%
+    dplyr::filter(!grepl("\\;", samples))
+  sing_count <-data.frame(table(sing_tmp$sample))
+  sing_count$population <- strsplit(x, split="_")[[1]][1]
+  sing_count$chrom      <- strsplit(x, split="_")[[1]][2]
+  return(sing_count)
+})) 
+```
+
+```{r singleton_rearrange}
+sing_df %>% 
+  dplyr::filter(population =="WAF") %>%
+  dplyr::group_by(Var1) %>%
+  dplyr::summarise(singletons = sum(Freq)) %>%
+  ggplot(aes(x=singletons)) + 
+  geom_histogram(bins=100) 
+```
